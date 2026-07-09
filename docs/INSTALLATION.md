@@ -40,6 +40,12 @@ If you want to build the image yourself:
 docker build -t plexus .
 ```
 
+For multi-arch hosts (e.g. build on Apple Silicon for a linux/amd64 NAS):
+
+```bash
+docker build --platform linux/amd64 -t plexus:local .
+```
+
 **Run the container:**
 ```bash
 docker run -p 4000:4000 \
@@ -49,6 +55,27 @@ docker run -p 4000:4000 \
   -e LOG_LEVEL=info \
   plexus
 ```
+
+### Custom fork on TrueNAS / Portainer
+
+Upstream images (`ghcr.io/mcowger/plexus`) may not include fork-only features
+(e.g. xAI SuperGrok OAuth). For a private deploy that you rebuild and update
+yourself:
+
+- **Source of truth:** Forgejo `git@git-ssh.dnx.ovh:wmc/plexus.git` (`origin`)
+- **Upstream (fetch only):** `https://github.com/mcowger/plexus.git` (`upstream`)
+- Full guide: **[DEPLOY_TRUENAS.md](./DEPLOY_TRUENAS.md)**
+  - Build / redeploy on TrueNAS (`plexus:xai-latest`)
+  - **Check upstream** (`git fetch upstream` / how far behind)
+  - Rebase → push Forgejo → rebuild → Portainer checklist
+- Optional helper (when Docker is available on the build machine):
+
+```bash
+./scripts/deploy-truenas-image.sh
+```
+
+Running image tag on this lab: **`plexus:xai-latest`** (local Docker on TrueNAS,
+Portainer stack **plexus** / ID 94).
 
 ## Standalone Binary
 
