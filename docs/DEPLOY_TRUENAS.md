@@ -8,8 +8,15 @@ Upstream (`ghcr.io/mcowger/plexus`, `github.com/mcowger/plexus`) does **not** sh
 those features — never switch stack 94 back to upstream `latest` if you need them.
 
 ```text
-check upstream  →  update private fork  →  docker build on TrueNAS  →  Portainer recreate
+check upstream / release tag
+    → rebase private fork (Forgejo origin)
+    → docker build on TrueNAS (plexus:xai-latest)
+    → Portainer stack 94 recreate (pull OFF)
 ```
+
+**Last verified:** branch `feat/xai-oauth-supergrok` rebased onto upstream
+tag **`2026.07.09.1`** (`39a1a633`), image `plexus:xai-3bf9643` / `plexus:xai-latest`
+deployed on TrueNAS stack **plexus** (xAI OAuth still registered).
 
 ---
 
@@ -172,13 +179,19 @@ ssh -T git@git-ssh.dnx.ovh
 
 ### Full rebuild from Forgejo
 
+Run on TrueNAS. If the whole script runs as **root** (`sudo bash …`), point Git at
+sbochna’s Forgejo key via `GIT_SSH_COMMAND` (root has no key of its own):
+
 ```bash
 BUILD_DIR=/tmp/plexus-xai-build
 REPO=git@git-ssh.dnx.ovh:wmc/plexus.git
 BRANCH=feat/xai-oauth-supergrok   # or main after you merge the feature
 
+# When building under sudo/root:
+export GIT_SSH_COMMAND='ssh -i /mnt/SSD/sbochna/.ssh/id_ed25519_forgejo -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new'
+
 sudo rm -rf "$BUILD_DIR"
-# clone as sbochna (uses ~/.ssh/id_ed25519_forgejo); docker build as root
+# Or as user sbochna (no GIT_SSH_COMMAND needed — uses ~/.ssh/config):
 git clone --branch "$BRANCH" --depth 1 "$REPO" "$BUILD_DIR"
 cd "$BUILD_DIR"
 SHA=$(git rev-parse --short HEAD)
@@ -197,6 +210,9 @@ sudo docker build --platform linux/amd64 \
 3. **Update the stack** with **Re-pull image / Pull image = OFF** (local tag)  
 4. Wait until container is Up  
 
+Docker will recreate the container and pick up the newly built local image ID for
+`plexus:xai-latest`.
+
 ### Optional: helper from a Mac with Docker
 
 ```bash
@@ -211,7 +227,7 @@ tag** is more reliable (see registry HTTPS note).
 
 ## Check upstream for updates
 
-Goal: see whether `mcowger/plexus` `main` has commits you do not have yet.
+Goal: see whether `mcowger/plexus` has commits (or a **release tag**) you do not have yet.
 
 ### Remotes (once)
 
@@ -223,11 +239,11 @@ git remote -v
 git remote add upstream https://github.com/mcowger/plexus.git
 ```
 
-### Are we behind upstream?
+### Are we behind upstream `main`?
 
 ```bash
 git fetch origin
-git fetch upstream
+git fetch upstream --tags
 
 # commits on upstream/main not in your current branch
 git log --oneline HEAD..upstream/main
@@ -245,18 +261,46 @@ git diff --stat HEAD...upstream/main
 | `N > 0` | Upstream moved; rebase/merge, then rebuild image |
 | conflicts later | Touch points: OAuth, enums, `config.ts`, frontend providers |
 
+### Check a specific GitHub release
+
+Example: [2026.07.09.1](https://github.com/mcowger/plexus/releases/tag/2026.07.09.1)
+
+```bash
+git fetch upstream --tags
+
+# release notes (needs gh CLI)
+gh release view 2026.07.09.1 --repo mcowger/plexus
+
+# does our branch already contain that tag?
+git merge-base --is-ancestor 2026.07.09.1 HEAD && echo "already includes release" || echo "need rebase"
+
+# commits in the release not in our branch
+git log --oneline HEAD..2026.07.09.1
+
+# confirm tag == upstream/main (often true for cut releases)
+git rev-parse 2026.07.09.1 upstream/main
+```
+
+| Result | Meaning |
+|--------|---------|
+| `already includes release` | No git work; rebuild only if you want a fresh image pin |
+| `need rebase` | Rebase onto `upstream/main` or onto the tag, then rebuild |
+
 ### Web UI
 
-- Forgejo: compare your branch to a bookmark of upstream if you mirror it  
-- Or open `https://github.com/mcowger/plexus/commits/main` and compare SHAs  
+- Releases: `https://github.com/mcowger/plexus/releases`  
+- Commits: `https://github.com/mcowger/plexus/commits/main`  
+- Forgejo: your branch history on `https://git.dnx.ovh/wmc/plexus`  
 
 ### Upstream Docker images
 
 ```text
 ghcr.io/mcowger/plexus:latest
+ghcr.io/mcowger/plexus:2026.07.09.1   # if published as a tag
 ```
 
-Useful only to know what they shipped — **not** as the running image for stack 94.
+Useful only to know what they shipped — **not** as the running image for stack 94
+if you need xAI OAuth.
 
 ---
 
@@ -264,15 +308,19 @@ Useful only to know what they shipped — **not** as the running image for stack
 
 ```bash
 cd /path/to/plexus
-git fetch upstream
+git fetch upstream --tags
 git checkout feat/xai-oauth-supergrok   # or main
 
 # Prefer rebase for a linear history; merge is fine if you prefer
 git rebase upstream/main
+# equivalent pin to a release:  git rebase 2026.07.09.1
 # conflicts → fix → git add … → git rebase --continue
 
 # Push to Forgejo (source of truth)
 git push origin feat/xai-oauth-supergrok --force-with-lease   # only if rebased
+
+# Optional public mirror
+git push github feat/xai-oauth-supergrok --force-with-lease
 ```
 
 Conflict hotspots for xAI OAuth:
@@ -287,14 +335,31 @@ Conflict hotspots for xAI OAuth:
 After a clean rebase/merge:
 
 1. **Rebuild** image on TrueNAS (section above).  
-2. **Redeploy** stack 94 (`plexus:xai-latest`).  
+2. **Redeploy** stack 94 (`plexus:xai-latest`, pull OFF).  
 3. **Verify** (section below).  
+
+### Worked example: `2026.07.09.1`
+
+```text
+[x] git fetch upstream --tags
+[x] git rev-list --count HEAD..upstream/main   # was 4
+[x] git rebase upstream/main                   # clean (no conflicts)
+[x] git push origin --force-with-lease
+[x] TrueNAS docker build → plexus:xai-latest (+ plexus:xai-3bf9643)
+[x] Portainer stack 94 recreate
+[x] health OK + oauth providers include xai
+```
+
+Release highlights absorbed: GPT-5.6 OAuth variants, deps/TS bumps (plus earlier
+main features already under the merge-base: playground routing, targeted traces,
+quota UX, speech/image fixes).
 
 ### Cadence
 
 | When | Action |
 |------|--------|
-| Weekly | `git fetch upstream && git rev-list --count HEAD..upstream/main` |
+| Weekly | `git fetch upstream --tags && git rev-list --count HEAD..upstream/main` |
+| New GitHub release | `gh release view <tag> --repo mcowger/plexus` then rebase if needed |
 | Non-zero count | Read log, rebase onto `upstream/main`, push `origin`, rebuild, redeploy |
 | Security fix on upstream | Same, prioritize immediately |
 
@@ -333,15 +398,18 @@ Data under `/mnt/SSD/nas-ssd/openclaw-lxc/plexus/data` survives image swaps.
 ## Checklist: routine update
 
 ```text
-[ ] git fetch origin && git fetch upstream
-[ ] git rev-list --count HEAD..upstream/main   # 0 → stop
+[ ] git fetch origin && git fetch upstream --tags
+[ ] optional: gh release list --repo mcowger/plexus --limit 3
+[ ] git rev-list --count HEAD..upstream/main   # 0 → stop (unless rebuild only)
 [ ] git log --oneline HEAD..upstream/main
-[ ] git rebase upstream/main                   # or merge
-[ ] git push origin HEAD --force-with-lease    # if rebased (Forgejo)
+[ ] git rebase upstream/main                   # or: git rebase <release-tag>
+[ ] git push origin HEAD --force-with-lease    # Forgejo
+[ ] optional: git push github HEAD --force-with-lease
 [ ] on TrueNAS: ssh -T git@git-ssh.dnx.ovh     # Forgejo key still works
 [ ] on TrueNAS: clone Forgejo → docker build → plexus:xai-latest (+ :xai-$SHA)
 [ ] Portainer stack 94: Update (pull OFF)
 [ ] health OK + oauth providers include xai
+[ ] note new image pin (e.g. plexus:xai-3bf9643) for rollback
 ```
 
 ---

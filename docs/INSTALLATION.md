@@ -67,8 +67,9 @@ yourself:
 - Full guide: **[DEPLOY_TRUENAS.md](./DEPLOY_TRUENAS.md)**
   - TrueNAS → Forgejo SSH key (`id_ed25519_forgejo` / title `truenas-plexus@dnx`)
   - Build / redeploy on TrueNAS (`plexus:xai-latest`)
-  - **Check upstream** (`git fetch upstream` / how far behind)
+  - **Check upstream / GitHub releases** (`git fetch upstream --tags`, `gh release view`)
   - Rebase → push Forgejo → rebuild → Portainer checklist
+  - Worked example: rebased onto tag `2026.07.09.1` with xAI OAuth retained
 - Optional helper (when Docker is available on the build machine):
 
 ```bash
