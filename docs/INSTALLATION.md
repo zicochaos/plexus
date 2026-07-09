@@ -65,6 +65,7 @@ yourself:
 - **Source of truth:** Forgejo `git@git-ssh.dnx.ovh:wmc/plexus.git` (`origin`)
 - **Upstream (fetch only):** `https://github.com/mcowger/plexus.git` (`upstream`)
 - Full guide: **[DEPLOY_TRUENAS.md](./DEPLOY_TRUENAS.md)**
+  - TrueNAS → Forgejo SSH key (`id_ed25519_forgejo` / title `truenas-plexus@dnx`)
   - Build / redeploy on TrueNAS (`plexus:xai-latest`)
   - **Check upstream** (`git fetch upstream` / how far behind)
   - Rebase → push Forgejo → rebuild → Portainer checklist

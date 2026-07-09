@@ -42,6 +42,7 @@ Web UI (Forgejo): `https://git.dnx.ovh` → org/user **wmc** → **plexus**.
 | Item | Value |
 |------|--------|
 | TrueNAS | `192.168.66.66` |
+| SSH user (lab) | `sbochna` (home: `/mnt/SSD/sbochna`) |
 | Portainer | `https://192.168.66.66:31015` (endpoint **3** = local Docker) |
 | Plexus stack | name **`plexus`**, ID **94**, port **4000** |
 | Image (running) | **`plexus:xai-latest`** (local Docker tag) |
@@ -50,6 +51,88 @@ Web UI (Forgejo): `https://git.dnx.ovh` → org/user **wmc** → **plexus**.
 | Config mount | `/mnt/SSD/nas-ssd/openclaw-lxc/plexus/config/plexus.yaml` |
 | Git origin | `git@git-ssh.dnx.ovh:wmc/plexus.git` |
 | Feature branch | `feat/xai-oauth-supergrok` (or merge into `main` on Forgejo) |
+| TrueNAS → Forgejo SSH | key `~/.ssh/id_ed25519_forgejo` (title **`truenas-plexus@dnx`** on user **wmc**) |
+
+---
+
+## TrueNAS SSH access to Forgejo
+
+Build/clone on TrueNAS uses **SSH** to Forgejo. Without a key on the NAS,  
+`git clone git@git-ssh.dnx.ovh:wmc/plexus.git` fails.
+
+### Current lab setup (already done)
+
+| Item | Value |
+|------|--------|
+| Host user | `sbochna@192.168.66.66` |
+| Private key | `~/.ssh/id_ed25519_forgejo` |
+| Public key | `~/.ssh/id_ed25519_forgejo.pub` |
+| Comment / Forgejo title | `truenas-plexus@dnx` |
+| Fingerprint | `SHA256:ysxoHBDqiU/PgvNhqbaohT1FXhncVBMhthdq00lG1bU` |
+| Forgejo account | **wmc** (user SSH key, not deploy key) |
+| SSH config Host | `git-ssh.dnx.ovh` → `IdentityFile ~/.ssh/id_ed25519_forgejo`, `IdentitiesOnly yes` |
+
+### Verify from TrueNAS
+
+```bash
+ssh sbochna@192.168.66.66
+
+# Should print: Hi there, wmc! ... key named truenas-plexus@dnx ...
+ssh -T git@git-ssh.dnx.ovh
+
+# Should list refs for the private fork
+git ls-remote git@git-ssh.dnx.ovh:wmc/plexus.git HEAD
+```
+
+### Recreate key + register on Forgejo (if lost / new host)
+
+On TrueNAS:
+
+```bash
+ssh sbochna@192.168.66.66
+
+ssh-keygen -t ed25519 -C "truenas-plexus@dnx" -f ~/.ssh/id_ed25519_forgejo -N ""
+
+# SSH client config (idempotent check: only append if missing)
+grep -q id_ed25519_forgejo ~/.ssh/config 2>/dev/null || cat >> ~/.ssh/config <<'EOF'
+
+Host git-ssh.dnx.ovh
+  HostName git-ssh.dnx.ovh
+  User git
+  IdentityFile ~/.ssh/id_ed25519_forgejo
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config ~/.ssh/id_ed25519_forgejo
+
+cat ~/.ssh/id_ed25519_forgejo.pub
+```
+
+Add the public key to Forgejo (pick one):
+
+1. **Web UI:** `https://git.dnx.ovh` → user **wmc** → Settings → SSH / GPG Keys → Add key  
+   - Title: `truenas-plexus@dnx`  
+   - Key: paste `.pub` contents  
+
+2. **API** (from a machine with `FORGEJO_TOKEN`):
+
+```bash
+# FORGEJO_TOKEN in ~/.config/mcp-keys.env (never commit)
+curl -sS -X POST "https://git.dnx.ovh/api/v1/user/keys" \
+  -H "Authorization: token $FORGEJO_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"title\":\"truenas-plexus@dnx\",\"key\":\"$(cat id_ed25519_forgejo.pub)\"}"
+```
+
+Then re-run the verify commands above.
+
+### Deploy key vs user key
+
+| Type | Use |
+|------|-----|
+| **User SSH key** (what we use) | Full access as **wmc**; clone any allowed repo |
+| **Deploy key** (repo-only) | Optional alternative: Settings → Deploy keys on `wmc/plexus`, read-only is enough for builds |
+
+Do **not** commit private keys. Public key + fingerprint in this doc is fine.
 
 ### Image tags
 
@@ -76,13 +159,16 @@ services:
 
 ## Build / deploy (TrueNAS — recommended)
 
-SSH to TrueNAS (needs sudo for Docker). **Clone from Forgejo** (primary):
+SSH to TrueNAS (needs sudo for Docker). **Clone from Forgejo** (primary).
+
+Prerequisite: [TrueNAS SSH access to Forgejo](#truenas-ssh-access-to-forgejo) (key
+`id_ed25519_forgejo` on user **wmc**).
 
 ```bash
 ssh sbochna@192.168.66.66
+# quick check:
+ssh -T git@git-ssh.dnx.ovh
 ```
-
-TrueNAS must have an SSH key authorized on Forgejo (`git@git-ssh.dnx.ovh`).
 
 ### Full rebuild from Forgejo
 
@@ -92,6 +178,7 @@ REPO=git@git-ssh.dnx.ovh:wmc/plexus.git
 BRANCH=feat/xai-oauth-supergrok   # or main after you merge the feature
 
 sudo rm -rf "$BUILD_DIR"
+# clone as sbochna (uses ~/.ssh/id_ed25519_forgejo); docker build as root
 git clone --branch "$BRANCH" --depth 1 "$REPO" "$BUILD_DIR"
 cd "$BUILD_DIR"
 SHA=$(git rev-parse --short HEAD)
@@ -250,8 +337,9 @@ Data under `/mnt/SSD/nas-ssd/openclaw-lxc/plexus/data` survives image swaps.
 [ ] git rev-list --count HEAD..upstream/main   # 0 → stop
 [ ] git log --oneline HEAD..upstream/main
 [ ] git rebase upstream/main                   # or merge
-[ ] git push origin HEAD --force-with-lease    # if rebased
-[ ] on TrueNAS: clone origin → docker build → plexus:xai-latest (+ :xai-$SHA)
+[ ] git push origin HEAD --force-with-lease    # if rebased (Forgejo)
+[ ] on TrueNAS: ssh -T git@git-ssh.dnx.ovh     # Forgejo key still works
+[ ] on TrueNAS: clone Forgejo → docker build → plexus:xai-latest (+ :xai-$SHA)
 [ ] Portainer stack 94: Update (pull OFF)
 [ ] health OK + oauth providers include xai
 ```
@@ -261,7 +349,8 @@ Data under `/mnt/SSD/nas-ssd/openclaw-lxc/plexus/data` survives image swaps.
 ## Do not
 
 - Deploy `ghcr.io/mcowger/plexus:latest` for this stack if you need xAI OAuth.  
-- Commit real `ADMIN_KEY` / tokens into git.  
+- Commit real `ADMIN_KEY` / tokens / **private** SSH keys into git.  
 - Use relative volume paths in Portainer (`./data`).  
 - Force-push without `--force-with-lease` after rebase.  
-- Treat GitHub as required — **Forgejo `origin` is enough** for TrueNAS builds.
+- Treat GitHub as required — **Forgejo `origin` is enough** for TrueNAS builds.  
+- Delete `~/.ssh/id_ed25519_forgejo` on TrueNAS without adding a replacement key to Forgejo.
